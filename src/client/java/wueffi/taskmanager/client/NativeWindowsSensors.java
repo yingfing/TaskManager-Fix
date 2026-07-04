@@ -43,12 +43,27 @@ final class NativeWindowsSensors {
         }
     }
 
+    private static final boolean IS_WINDOWS;
+
+    static {
+        String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
+        IS_WINDOWS = os.contains("win");
+    }
+
     private static final int FILE_MAP_READ = 0x0004;
     private static final int HWINFOMAP_BYTES = 512 * 1024;
     private static final int CORETEMP_BYTES = 4096;
-    private final GpuEngineSampler gpuEngineSampler = new GpuEngineSampler();
+    private final GpuEngineSampler gpuEngineSampler;
+
+    NativeWindowsSensors() {
+        this.gpuEngineSampler = IS_WINDOWS ? new WindowsGpuEngineSampler() : new DummyGpuEngineSampler();
+    }
 
     Sample sample(String activeRenderer, String activeVendor) {
+        if (!IS_WINDOWS) {
+            return Sample.empty();
+        }
+
         SensorAccumulator sensors = new SensorAccumulator(activeRenderer, activeVendor);
         double cpuLoad = sampleCpuLoad();
         double pdhGpuLoad = gpuEngineSampler.sample(sensors);
@@ -104,6 +119,7 @@ final class NativeWindowsSensors {
     }
 
     private void readHwInfoSharedMemory(SensorAccumulator sensors) {
+        if (!IS_WINDOWS) return;
         String[] mappingNames = {"Global\\HWiNFO_SENS_SM2", "HWiNFO_SENS_SM2"};
         for (String mappingName : mappingNames) {
             sensors.addAttempt("HWiNFO Shared Memory");
@@ -146,6 +162,7 @@ final class NativeWindowsSensors {
     }
 
     private void readCoreTempSharedMemory(SensorAccumulator sensors) {
+        if (!IS_WINDOWS) return;
         String[] mappingNames = {"CoreTempMappingObjectEx", "CoreTempMappingObject"};
         for (String mappingName : mappingNames) {
             sensors.addAttempt("Core Temp Shared Memory");
@@ -215,6 +232,7 @@ final class NativeWindowsSensors {
         return new String(raw, 0, end, StandardCharsets.US_ASCII).trim();
     }
 
+    // ---------- SensorAccumulator 不变 ----------
     private static final class SensorAccumulator {
         private final String normalizedTarget;
         private final List<String> attempts = new ArrayList<>();
@@ -371,6 +389,7 @@ final class NativeWindowsSensors {
         }
     }
 
+    // ---------- MappedView 不变 ----------
     private static final class MappedView implements AutoCloseable {
         private final WinNT.HANDLE mapping;
         private final Pointer view;
@@ -420,14 +439,21 @@ final class NativeWindowsSensors {
         }
     }
 
-    private static final class GpuEngineSampler {
+    // ---------- 接口定义 ----------
+    private interface GpuEngineSampler {
+        double sample(SensorAccumulator sensors);
+    }
+
+    // ---------- Windows 实现（原 GpuEngineSampler 代码） ----------
+    private static final class WindowsGpuEngineSampler implements GpuEngineSampler {
         private static final long INSTANCE_REFRESH_MS = 5_000L;
         private WinNT.HANDLE queryHandle;
         private final List<WinNT.HANDLE> counterHandles = new ArrayList<>();
         private long lastRefreshAtMillis;
         private boolean primed;
 
-        private double sample(SensorAccumulator sensors) {
+        @Override
+        public double sample(SensorAccumulator sensors) {
             synchronized (this) {
                 sensors.addAttempt("Windows PDH GPU Counters");
                 if (!ensureQuery(sensors)) {
@@ -534,6 +560,15 @@ final class NativeWindowsSensors {
         }
     }
 
+    // ---------- Dummy 实现（Linux 下使用） ----------
+    private static final class DummyGpuEngineSampler implements GpuEngineSampler {
+        @Override
+        public double sample(SensorAccumulator sensors) {
+            return -1.0;
+        }
+    }
+
+    // ---------- Pdh 辅助接口和结构（保留，仅 Windows 使用） ----------
     private interface PdhExtra extends StdCallLibrary {
         PdhExtra INSTANCE = Native.load("Pdh", PdhExtra.class, W32APIOptions.DEFAULT_OPTIONS);
 
