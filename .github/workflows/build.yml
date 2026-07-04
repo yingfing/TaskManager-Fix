@@ -3,53 +3,59 @@ name: Build and Release
 on:
   push:
     tags:
-      - '*'   # 当推送以 'v' 开头的标签时触发，如 v1.2.4
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.2.4)'
+        required: true
+      prerelease:
+        description: 'Is this a pre-release?'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  contents: write   # 允许创建 Release 和上传资产
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      # 1. 检出代码（包含子模块）
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: true
-
-      # 2. 设置 Java 环境
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'microsoft'
           java-version: '21'
-
-      # 3. 使 Gradle 包装器可执行
       - name: Make gradlew executable
         run: chmod +x ./gradlew
-
-      # 4. 编译模组
       - name: Build with Gradle
         run: ./gradlew clean build
-
-      # 5. 创建 GitHub Release 并上传 JAR
+      - name: Determine tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "tag_name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag_name=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          fi
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
-          # 从标签名提取版本号，例如 v1.2.4 → 1.2.4
-          name: "Task Manager ${{ github.ref_name }}"
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: "Task Manager ${{ steps.tag.outputs.tag_name }}"
           body: |
-            ## 自动发布
+            ## 自动构建发布
             此版本由 GitHub Actions 自动构建。
 
             ### 更新内容
             - 修复 Linux 平台因加载 Windows Pdh 库导致的崩溃
-            - 更多详情请查看 [CHANGELOG]() 或提交记录
           draft: false
-          prerelease: false
+          prerelease: ${{ inputs.prerelease || false }}
           files: |
-            build/libs/*.jar   # 匹配所有 .jar 文件，通常只有一个
+            build/libs/*.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
