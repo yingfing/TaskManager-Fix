@@ -1,45 +1,55 @@
-# 工作流名称
-name: Build Mod
+name: Build and Release
 
-# 触发条件：当有推送或拉取请求到 main 或 master 分支时执行
 on:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
+    tags:
+      - '*'   # 当推送以 'v' 开头的标签时触发，如 v1.2.4
 
-# 工作流程中的任务（Jobs）
+permissions:
+  contents: write   # 允许创建 Release 和上传资产
+
 jobs:
   build:
-    # 运行环境：使用最新版的 Ubuntu[reference:3]
     runs-on: ubuntu-latest
 
-    # 步骤（Steps）
     steps:
-      # 1. 检出代码[reference:4]
-      - name: Checkout Repository
+      # 1. 检出代码（包含子模块）
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: true
 
-      # 2. 设置 Java 环境[reference:5]
+      # 2. 设置 Java 环境
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'microsoft'   # 使用 Microsoft 的 JDK[reference:6]
-          java-version: '21'          # 设置 Java 版本为 21[reference:7]
+          distribution: 'microsoft'
+          java-version: '21'
 
-      # 3. 使 Gradle 包装器可执行[reference:8]
-      - name: Make Gradle Wrapper Executable
+      # 3. 使 Gradle 包装器可执行
+      - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # 4. 执行编译[reference:9][reference:10]
+      # 4. 编译模组
       - name: Build with Gradle
         run: ./gradlew clean build
 
-      # 5. 上传编译产物（JAR 文件）[reference:11]
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      # 5. 创建 GitHub Release 并上传 JAR
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
         with:
-          name: Artifacts
-          path: build/libs/
+          # 从标签名提取版本号，例如 v1.2.4 → 1.2.4
+          name: "Task Manager ${{ github.ref_name }}"
+          body: |
+            ## 自动发布
+            此版本由 GitHub Actions 自动构建。
+
+            ### 更新内容
+            - 修复 Linux 平台因加载 Windows Pdh 库导致的崩溃
+            - 更多详情请查看 [CHANGELOG]() 或提交记录
+          draft: false
+          prerelease: false
+          files: |
+            build/libs/*.jar   # 匹配所有 .jar 文件，通常只有一个
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
